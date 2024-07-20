@@ -17,11 +17,11 @@ namespace SimplyInjectedDistributedCache.Extensions
             };
             options.CertificateValidation += delegate (
                 object sender,
-                X509Certificate certificatez,
+                X509Certificate certificates,
                 X509Chain chain,
                 SslPolicyErrors sslPolicyErrors)
             {
-                return certificatez?.Subject != null;
+                return certificates?.Subject != null;
             };
         }
     }
