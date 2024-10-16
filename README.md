@@ -74,7 +74,7 @@ Then we make the connection info available to our application. In this case, we'
 	<add key="Redis.Password" value="password"/>
 	<add key="Redis.UseSSL" value="false"/>
 	<add key="Redis.Certificate" value="Certificates\redis.pfx"/>
-	<add key="Redis.InstanceName" value="my-app:"/>
+	<add key="Redis.InstanceName" value="my-app"/>
   </appSettings>
 </configuration>
 ```
