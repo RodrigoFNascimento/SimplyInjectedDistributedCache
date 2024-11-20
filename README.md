@@ -74,7 +74,7 @@ Then we make the connection info available to our application. In this case, we'
 	<add key="Redis.Password" value="password"/>
 	<add key="Redis.UseSSL" value="false"/>
 	<add key="Redis.Certificate" value="Certificates\redis.pfx"/>
-	<add key="Redis.InstanceName" value="my-app"/>
+	<add key="Redis.InstanceName" value="my-appSimplyInjectedDistributedCachenSimplyInjectedDistributedCachen"/>
   </appSettings>
 </configuration>
 ```
@@ -181,5 +181,101 @@ public class ValuesController : ApiController
 
         return Ok();
     }
+}
+```
+
+## Output cache
+
+An output cache allows our web API to respond to HTTP requests without even executing the endpoint logic, making the response much faster.
+
+We are going to start by implementing an `ActionFilterAttribute` named [OutputCacheAttribute](./src/SimplyInjectedDistributedCache/Attributes/OutputCacheAttribute.cs) that implements the methods `OnActionExecutingAsync` and `OnActionExecutedAsync`.
+
+### OnActionExecutingAsync
+
+This method executes before the endpoint and is therefore responsible for getting the previously stored response. It uses `IDistributedCache` to fetch the response from the cache and set it as the response of the `HttpActionContext`.
+
+### OnActionExecutedAsync
+
+This method executes after the endpoint and is therefore responsible for storing the response on the cache using `IDistributedCache`.
+
+### Varying the cache entry
+
+Different requests may have different responses depending on the query parameters, path variables, headers... So we need to consider those when caching the response.
+
+To vary by URL, for example, we can use it to generate our cache key by getting it from `HttpActionExecutedContext` and  replacing all "/" by ":":
+
+```csharp
+private string GenerateCacheKey(HttpRequestMessage request) =>
+    request.RequestUri.AbsolutePath.Trim('/').Replace('/', ':');
+```
+
+### Response expiration
+
+Eventually, the response may be outdated so we want it to expire with time. Once it does, the endpoint will be executed again and the new response will be stored. To acheive that, we need to add an expiration time to the constructor of our attribute:
+
+```csharp
+private readonly int _durationInSeconds;
+
+public OutputCacheAttribute(int durationInSeconds)
+{
+    _durationInSeconds = durationInSeconds;
+}
+```
+
+And set it as the expiration for the cache key:
+
+```csharp
+public override async Task OnActionExecutedAsync(HttpActionExecutedContext actionExecutedContext, CancellationToken cancellationToken)
+{
+    // ...
+    await _cache.SetStringAsync(cacheKey, serializedResponse, new DistributedCacheEntryOptions
+    {
+        AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(_durationInSeconds)
+    });
+}
+```
+
+Now we can configure it when applying the attribute to the endpoint:
+
+```csharp
+[OutputCache(60)]
+public async Task<IHttpActionResult> Get(CancellationToken cancellationToken)
+{
+    // ...
+}
+```
+
+### Cache-Control
+
+According to [Mozilla](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Cache-Control):
+
+> The HTTP Cache-Control header holds directives (instructions) in both requests and responses that control caching in browsers and shared caches (e.g., Proxies, CDNs).
+
+So it's really important that our application takes the header directives into consideration and responds appropriately.
+
+For example, we can check if the `no-cache` directive is present in the request and if so execute the endpoint:
+
+```csharp
+public override async Task OnActionExecutingAsync(HttpActionContext actionContext, CancellationToken cancellationToken)
+{
+    // Check if the request has the HTTP header Cache-Control: no-cache
+    var cacheControlHeader = actionContext.Request.Headers.CacheControl;
+    var noCache = cacheControlHeader?.NoCache ?? false;
+
+    if (noCache)
+        return;
+}
+```
+
+And then add the `no-cache` directive in the response as well to make it clear to the client that the cache was not used:
+
+```csharp
+public override async Task OnActionExecutedAsync(HttpActionExecutedContext actionExecutedContext, CancellationToken cancellationToken)
+{
+    var cacheControlHeader = actionExecutedContext.Request.Headers.CacheControl;
+    var noCache = cacheControlHeader?.NoCache ?? false;
+
+    if (noCache)
+        actionExecutedContext.Response.Headers.CacheControl.NoCache = noCache;
 }
 ```
